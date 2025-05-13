@@ -22,19 +22,6 @@ def region_of_interest(img):
 
 
 def average_lane_line(lines, height, width, is_left=True, degree=1):
-    """
-    Fits a polynomial to lane lines and returns points for drawing
-    
-    Args:
-        lines: List of detected line segments
-        height: Image height
-        width: Image width
-        is_left: Whether this is the left lane (True) or right lane (False)
-        degree: Polynomial degree (1=linear, 2=quadratic for curves)
-        
-    Returns:
-        List of points to draw the fitted lane line
-    """
     if len(lines) == 0:
         return None
     
