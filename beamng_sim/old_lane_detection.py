@@ -85,34 +85,41 @@ def combine_threshold(s_binary, combined):
     combined_binary[(s_binary == 1) | (combined == 1)] = 1
 
     return combined_binary
-
-def dynamic_src_points(img_shape, speed, base_top_ratio=0.57, top_shift_factor=0.2):
     
 
 
-def warp(img):
+def warp(img, speed=0):
     img_size = (img.shape[1], img.shape[0])
-    
-    # Dynamically scale src points for any resolution
+    w, h = img_size
+
+    left_bottom  = [w*0.012, h*0.995]
+    right_bottom = [w*0.99,  h*0.995]
+
+    speed_norm = min(speed / 120.0, 1.0)  # normalize speed (0-120 km/h)
+    top_y = h * (0.57 - 0.15 * speed_norm)  # move up for higher speed
+    top_left_x  = w * (0.41 + 0.1 * speed_norm)  # inward
+    top_right_x = w * (0.57 - 0.1 * speed_norm)  # inward
+
     src = np.float32([
-        [img_size[0]*0.012, img_size[1]*0.995],   # left-bottom
-        [img_size[0]*0.99,  img_size[1]*0.995],   # right-bottom
-        [img_size[0]*0.57,  img_size[1]*0.57],    # right-top
-        [img_size[0]*0.41,  img_size[1]*0.57]     # left-top
+        left_bottom,
+        right_bottom,
+        [top_right_x, top_y],
+        [top_left_x, top_y]
     ])
+
     dst = np.float32([
-        [img_size[0]*0.2, img_size[1]],   # bottom-left
-        [img_size[0]*0.8, img_size[1]],   # bottom-right
-        [img_size[0]*0.8, 0],             # top-right
-        [img_size[0]*0.2, 0]              # top-left
+        [w*0.2, h],
+        [w*0.8, h],
+        [w*0.8, 0],
+        [w*0.2, 0]
     ])
-    
+
     M = cv2.getPerspectiveTransform(src, dst)
     Minv = cv2.getPerspectiveTransform(dst, src)
-    
+
     binary_warped = cv2.warpPerspective(img, M, img_size, flags=cv2.INTER_LINEAR)
-   
     return binary_warped, Minv
+
 
 
 def get_histogram(binary_warped):
@@ -185,30 +192,59 @@ def slide_window(binary_warped, histogram):
 def measure_curvature_and_deviation(ploty, lines_info, binary_warped):
     ym_per_pix = 30/720
 
-    leftx = lines_info['left_fitx']
-    rightx = lines_info['right_fitx']
-
-    leftx = leftx[::-1]  
-    rightx = rightx[::-1]  
+    leftx = lines_info['left_fitx'][::-1]
+    rightx = lines_info['right_fitx'][::-1]
 
     y_eval = np.max(ploty)
 
     left_bottom = leftx[-1]
     right_bottom = rightx[-1]
     lane_width_pix = right_bottom - left_bottom
-    xm_per_pix = 3.7 / lane_width_pix
+
+    # Better sanity checks for lane width
+    if lane_width_pix < 50 or lane_width_pix > 700:
+        print(f"Unreasonable lane width: {lane_width_pix:.1f} pixels")
+        return None, None, None, None, None
+
+    # Check if lane lines are crossed (left is right of right)
+    if left_bottom >= right_bottom:
+        print(f"Lane lines crossed: left={left_bottom:.1f}, right={right_bottom:.1f}")
+        return None, None, None, None, None
+
+    # Standard lane width is 3.7 meters
+    xm_per_pix = 3.7 / lane_width_pix  # meters per pixel in x
+
+    # Sanity check for meter-per-pixel calculation
+    if xm_per_pix <= 0 or xm_per_pix > 0.1:  # 0.1 m/px would be extremely fine resolution
+        print(f"Unreasonable xm_per_pix: {xm_per_pix:.4f}")
+        return None, None, None, None, None
 
     left_fit_cr = np.polyfit(ploty * ym_per_pix, leftx * xm_per_pix, 2)
     right_fit_cr = np.polyfit(ploty * ym_per_pix, rightx * xm_per_pix, 2)
 
-    left_curverad = ((1 + (2*left_fit_cr[0]*y_eval*ym_per_pix + left_fit_cr[1])**2)**1.5) / np.absolute(2*left_fit_cr[0])
-    right_curverad = ((1 + (2*right_fit_cr[0]*y_eval*ym_per_pix + right_fit_cr[1])**2)**1.5) / np.absolute(2*right_fit_cr[0])
+    left_curverad = ((1 + (2*left_fit_cr[0]*y_eval*ym_per_pix + left_fit_cr[1])**2)**1.5) \
+                    / np.absolute(2*left_fit_cr[0])
+    right_curverad = ((1 + (2*right_fit_cr[0]*y_eval*ym_per_pix + right_fit_cr[1])**2)**1.5) \
+                    / np.absolute(2*right_fit_cr[0])
+
+    # Sanity check for curvature
+    max_reasonable_curve = 1000  # meters
+    if left_curverad > max_reasonable_curve or right_curverad > max_reasonable_curve:
+        left_curverad = min(left_curverad, max_reasonable_curve)
+        right_curverad = min(right_curverad, max_reasonable_curve)
 
     lane_center = (left_bottom + right_bottom) / 2.0
     vehicle_center = binary_warped.shape[1] / 2.0
     deviation_m = (vehicle_center - lane_center) * xm_per_pix
 
+    # Strict limitation on deviation
+    max_reasonable_deviation = 0.75  # meters - typical lane width is ~3.7m
+    if abs(deviation_m) > max_reasonable_deviation:
+        print(f"Unreasonable deviation detected: {deviation_m:.2f}m, clipping to {max_reasonable_deviation:.2f}m")
+        deviation_m = np.clip(deviation_m, -max_reasonable_deviation, max_reasonable_deviation)
+
     return left_curverad, right_curverad, deviation_m, lane_center, vehicle_center
+
 
 
 def draw_lane_lines(original_image, warped_image, Minv, draw_info):
