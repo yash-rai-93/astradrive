@@ -33,3 +33,8 @@ training/
 # For now
 docker/
 services/
+
+# Local Git history backups
+*-git-backup-*/
+.git-backup*/
+git-data.zip
