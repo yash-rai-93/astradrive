@@ -1,0 +1,5 @@
+{
+  "name": "AstraDrive",
+  "description": "A modern, interactive showcase for the AstraDrive autonomous driving simulation and perception system.",
+  "requestFramePermissions": []
+}

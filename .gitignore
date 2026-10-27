@@ -38,3 +38,8 @@ services/
 *-git-backup-*/
 .git-backup*/
 git-data.zip
+
+# Website build and local dependencies
+/website/node_modules/
+/website/dist/
+/website/.env*
